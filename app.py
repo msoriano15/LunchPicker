@@ -74,4 +74,57 @@ with st.sidebar:
 st.title("🍕 Team Lunch Roulette")
 st.write(f"Near: **{OFFICE_ADDRESS}**")
 
-lat, lon = get_coords(
+lat, lon = get_coords(OFFICE_ADDRESS)
+
+if lat:
+    if not st.session_state.places:
+        raw_data = fetch_osm_data(lat, lon, distance)
+        st.session_state.places = [p for p in raw_data if 'tags' in p and 'name' in p['tags']]
+
+    if st.button("🎲 SPIN THE WHEEL"):
+        if st.session_state.places:
+            # Loading Sequence
+            msgs = ["Scanning area...", "Checking menus...", "Decision reached!"]
+            status = st.empty()
+            for m in msgs:
+                status.text(m)
+                time.sleep(0.4)
+            status.empty()
+            
+            winner = random.choice(st.session_state.places)
+            st.session_state.winner_info = {
+                'name': winner['tags'].get('name'),
+                'cuisine': winner['tags'].get('cuisine', 'Food').capitalize(),
+                'lat': winner.get('lat', winner.get('center', {}).get('lat')),
+                'lon': winner.get('lon', winner.get('center', {}).get('lon'))
+            }
+        else:
+            st.warning("No spots found nearby.")
+
+    st.divider()
+
+    # DISPLAY THE RESULT
+    if st.session_state.winner_info:
+        res = st.session_state.winner_info
+        
+        # Black Card
+        st.markdown(f"""
+            <div class="result-card">
+                <h2 style="color: white; margin: 0;">{res['name']}</h2>
+                <p style="margin: 5px 0 0 0; opacity: 0.8;">🍴 {res['cuisine']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Interactive Map - Full Width
+        m = folium.Map(location=[res['lat'], res['lon']], zoom_start=17)
+        folium.Marker([res['lat'], res['lon']], popup=res['name'], icon=folium.Icon(color='black')).add_to(m)
+        folium.Marker([lat, lon], popup="Office", icon=folium.Icon(color='gray')).add_to(m)
+        
+        # Using use_container_width to make the map look better on mobile
+        st_folium(m, width=700, height=400, key="lunch_map_final")
+        
+        st.markdown(f"### [↗️ Open Directions in Google Maps](https://www.google.com/maps/dir/?api=1&origin={lat},{lon}&destination={res['lat']},{res['lon']}&travelmode=walking)")
+    else:
+        st.info("Click the button to decide lunch!")
+else:
+    st.error("Address not found. Check the code!")
