@@ -2,22 +2,31 @@ import streamlit as st
 import requests
 import random
 import folium
+import time
 from geopy.geocoders import Nominatim
 from streamlit_folium import st_folium
-from streamlit_extras.let_it_rain import rain
 
 # --- CONFIGURATION ---
-# Change this to your actual office address!
-OFFICE_ADDRESS = "ÅSÖGATAN 115,116 24 STOCKHOLM, SWEDEN " 
+OFFICE_ADDRESS = "ÅSÖGATAN 115,116 24 STOCKHOLM, SWEDEN" # <--- Change to your office!
 
 st.set_page_config(page_title="Team Lunch Roulette", page_icon="🍕", layout="centered")
 
 # --- STYLING ---
 st.markdown("""
     <style>
-    .stButton>button { width: 100%; border-radius: 20px; height: 3.5em; 
-        background-color: #ff4b4b; color: white; font-weight: bold; font-size: 1.2rem; }
-    .stButton>button:hover { border: 2px solid #ff4b4b; color: #ff4b4b; background-color: white; }
+    /* The Big Black Spin Button */
+    .stButton>button { 
+        width: 100%; border-radius: 10px; height: 3.5em; 
+        background-color: #000000; color: #ffffff; 
+        font-weight: bold; font-size: 1.2rem; border: 2px solid #000000;
+    }
+    .stButton>button:hover { background-color: #333333; border: 2px solid #333333; color: white; }
+    
+    /* Custom Result Card */
+    .result-card {
+        background-color: #000000; color: #ffffff; 
+        padding: 20px; border-radius: 10px; margin-bottom: 20px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -25,13 +34,13 @@ st.markdown("""
 @st.cache_data(show_spinner=False)
 def get_coords(address):
     try:
-        geolocator = Nominatim(user_agent="office_lunch_app_v2")
+        geolocator = Nominatim(user_agent="office_lunch_app_v3")
         location = geolocator.geocode(address, timeout=10)
         return (location.latitude, location.longitude) if location else (None, None)
     except:
         return None, None
 
-@st.cache_data(show_spinner="Fetching local spots...")
+@st.cache_data(show_spinner="Searching neighborhood...")
 def fetch_osm_data(lat, lon, radius):
     url = "http://overpass-api.de/api/interpreter"
     query = f"""
@@ -47,7 +56,6 @@ def fetch_osm_data(lat, lon, radius):
         return []
 
 # --- STATE MANAGEMENT ---
-# This stops the "glitch" by saving the winner in memory
 if 'winner_info' not in st.session_state:
     st.session_state.winner_info = None
 if 'places' not in st.session_state:
@@ -56,67 +64,80 @@ if 'places' not in st.session_state:
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Settings")
-    distance = st.slider("Walking distance (meters)", 200, 2000, 600)
-    st.divider()
-    if st.button("🔄 Clear App Cache"):
-        st.cache_data.clear()
+    distance = st.slider("Walking distance (m)", 200, 2000, 600)
+    if st.button("🔄 Reset App"):
         st.session_state.clear()
         st.rerun()
 
 # --- MAIN APP UI ---
 st.title("🍕 Team Lunch Roulette")
-st.write(f"Finding food near: **{OFFICE_ADDRESS}**")
+st.write(f"Near: **{OFFICE_ADDRESS}**")
 
 lat, lon = get_coords(OFFICE_ADDRESS)
 
 if lat:
-    # 1. Fetch data if we don't have it yet
     if not st.session_state.places:
         raw_data = fetch_osm_data(lat, lon, distance)
         st.session_state.places = [p for p in raw_data if 'tags' in p and 'name' in p['tags']]
 
-    # 2. The Spin Button
     if st.button("🎲 SPIN THE WHEEL"):
         if st.session_state.places:
-            winner = random.choice(st.session_state.places)
+            # Loading Sequence
+            msgs = ["Scanning area...", "Filtering by vibe...", "Finalizing choice..."]
+            status = st.empty()
+            for m in msgs:
+                status.text(m)
+                time.sleep(0.5)
+            status.empty()
             
-            # Save winner details to session state so they don't disappear on rerun
+            winner = random.choice(st.session_state.places)
             st.session_state.winner_info = {
                 'name': winner['tags'].get('name'),
                 'cuisine': winner['tags'].get('cuisine', 'Food').capitalize(),
                 'lat': winner.get('lat', winner.get('center', {}).get('lat')),
                 'lon': winner.get('lon', winner.get('center', {}).get('lon'))
             }
-            # Visual flair
-            rain(emoji="🥗", font_size=54, falling_speed=4, animation_length="short")
         else:
-            st.warning("No places found! Try increasing the distance in the sidebar.")
+            st.warning("No spots found nearby.")
 
     st.divider()
 
-    # 3. DISPLAY THE RESULT (Persistent)
+    # DISPLAY THE RESULT
     if st.session_state.winner_info:
         res = st.session_state.winner_info
         
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            st.success(f"### We're going to:\n**{res['name']}**")
-        with col2:
-            st.info(f"🍴 **Style**\n{res['cuisine']}")
+        # Black Card
+        st.markdown(f"""
+            <div class="result-card">
+                <h2 style="color: white; margin: 0;">{res['name']}</h2>
+                <p style="margin: 5px 0 0 0; opacity: 0.8;">🍴 {res['cuisine']}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
-        # Interactive Map - using a static key prevents the 'flicker'
-        m = folium.Map(location=[res['lat'], res['lon']], zoom_start=17)
-        folium.Marker([res['lat'], res['lon']], popup=res['name'], tooltip=res['name'], 
-                      icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
-        folium.Marker([lat, lon], popup="Office", icon=folium.Icon(color='blue', icon='briefcase')).add_to(m)
+        col_map, col_share = st.columns([3, 1])
         
-        st_folium(m, width=700, height=300, key="lunch_map_static")
+        with col_share:
+            st.write("📢 **Share**")
+            st.markdown(f"""
+                <a href="https://slack.com/app_redirect?channel=general" target="_blank" style="text-decoration:none;">
+                    <button style="width:100%; background-color:#4A154B; color:white; border:none; padding:8px; border-radius:5px; margin-bottom:5px; cursor:pointer;">Slack</button>
+                </a>
+                <a href="https://teams.microsoft.com/l/chat/0/0?users=" target="_blank" style="text-decoration:none;">
+                    <button style="width:100%; background-color:#464EB8; color:white; border:none; padding:8px; border-radius:5px; cursor:pointer;">Teams</button>
+                </a>
+            """, unsafe_allow_html=True)
+            
+            if st.button("📋 Copy"):
+                st.code(f"Lunch: {res['name']} ({res['cuisine']})")
+
+        with col_map:
+            m = folium.Map(location=[res['lat'], res['lon']], zoom_start=17)
+            folium.Marker([res['lat'], res['lon']], popup=res['name'], icon=folium.Icon(color='black')).add_to(m)
+            folium.Marker([lat, lon], popup="Office", icon=folium.Icon(color='gray')).add_to(m)
+            st_folium(m, width=500, height=300, key="lunch_map_final")
         
-        st.markdown(f"### [↗️ Open in Google Maps](https://www.google.com/maps/dir/?api=1&origin={lat},{lon}&destination={res['lat']},{res['lon']}&travelmode=walking)")
+        st.markdown(f"### [↗️ Open Directions](https://www.google.com/maps/dir/?api=1&origin={lat},{lon}&destination={res['lat']},{res['lon']}&travelmode=walking)")
     else:
-        st.info("Click the button above to decide your fate!")
-
+        st.info("Click the button to decide lunch!")
 else:
-    st.error("Could not find office coordinates. Please check the address in the code.")
-
-st.caption("Data provided by OpenStreetMap. If a place is missing, it needs to be added to OSM!")
+    st.error("Address not found. Check the code!")
