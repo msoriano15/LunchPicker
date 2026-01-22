@@ -1,78 +1,93 @@
 import streamlit as st
 import requests
 import random
+import folium
 from geopy.geocoders import Nominatim
+from streamlit_folium import st_folium
+from streamlit_extras.let_it_rain import rain
 
-st.set_page_config(page_title="Free Lunch Roulette", page_icon="🥪")
+# --- CONFIGURATION ---
+OFFICE_ADDRESS = "ÅSÖGATAN 115, 116 24 STOCKHOLM, SWEDEN " # <--- Change this to your office!
 
-# 1. User Inputs
-st.title("🥪 Free Lunch Decider")
-st.markdown("Uses **OpenStreetMap** (No API keys required!)")
+st.set_page_config(page_title="Team Lunch Roulette", page_icon="🍕")
 
-location_input = st.text_input("Where are you?", "Times Square, NY")
-radius = st.slider("Walking Distance (meters)", 200, 2000, 500)
+# Custom CSS for a cleaner look
+st.markdown("""
+    <style>
+    .main { text-align: center; }
+    .stButton>button { width: 100%; border-radius: 20px; height: 3em; background-color: #ff4b4b; color: white; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# 2. Function to get coordinates from address (Free via Nominatim)
+# --- FUNCTIONS ---
 @st.cache_data
-def get_lat_lon(address):
-    geolocator = Nominatim(user_agent="lunch_roulette_app_v1")
+def get_coords(address):
+    geolocator = Nominatim(user_agent="office_lunch_app")
     location = geolocator.geocode(address)
-    if location:
-        return location.latitude, location.longitude
-    return None, None
+    return (location.latitude, location.longitude) if location else (None, None)
 
-# 3. Function to fetch restaurants from OpenStreetMap
-def get_restaurants_osm(lat, lon, radius):
-    # Overpass Query Language
-    # We ask for nodes, ways, and relations with amenity=restaurant around our lat/lon
-    overpass_url = "http://overpass-api.de/api/interpreter"
-    overpass_query = f"""
+def fetch_osm_data(lat, lon, radius):
+    url = "http://overpass-api.de/api/interpreter"
+    query = f"""
     [out:json];
-    (
-      node["amenity"~"restaurant|cafe|fast_food"](around:{radius},{lat},{lon});
-      way["amenity"~"restaurant|cafe|fast_food"](around:{radius},{lat},{lon});
-      relation["amenity"~"restaurant|cafe|fast_food"](around:{radius},{lat},{lon});
-    );
+    (node["amenity"~"restaurant|cafe|fast_food|pub"](around:{radius},{lat},{lon});
+     way["amenity"~"restaurant|cafe|fast_food|pub"](around:{radius},{lat},{lon}););
     out center;
     """
-    response = requests.get(overpass_url, params={'data': overpass_query})
-    data = response.json()
-    return data.get('elements', [])
+    response = requests.get(url, params={'data': query})
+    return response.json().get('elements', [])
 
-# 4. The Logic
-if st.button("Find Lunch! 🥗"):
-    with st.spinner("Searching the map..."):
-        lat, lon = get_lat_lon(location_input)
-        
-        if lat:
-            results = get_restaurants_osm(lat, lon, radius)
+# --- APP UI ---
+st.title("🍕 Team Lunch Roulette")
+st.write(f"Based near: **{OFFICE_ADDRESS}**")
+
+# Sidebar Filters
+with st.sidebar:
+    st.header("Settings")
+    distance = st.slider("Walking distance (m)", 200, 2000, 600)
+    show_map = st.checkbox("Show map", value=True)
+    if st.button("Reset Session"):
+        st.session_state.clear()
+
+# Logic to get location
+lat, lon = get_coords(OFFICE_ADDRESS)
+
+if lat:
+    if 'places' not in st.session_state:
+        raw_data = fetch_osm_data(lat, lon, distance)
+        # Filter for places that have a name
+        st.session_state.places = [p for p in raw_data if 'tags' in p and 'name' in p['tags']]
+
+    if st.button("🎲 SPIN THE WHEEL"):
+        if st.session_state.places:
+            winner = random.choice(st.session_state.places)
+            st.session_state.last_winner = winner
             
-            if results:
-                # Filter out places without names
-                valid_places = [r for r in results if 'tags' in r and 'name' in r['tags']]
+            # Interactive "Rain" effect
+            rain(emoji="🥗", font_size=54, falling_speed=5, animation_length="short")
+            
+            # Display Result
+            name = winner['tags'].get('name')
+            cuisine = winner['tags'].get('cuisine', 'Food').capitalize()
+            
+            st.success(f"### We're going to: {name}")
+            st.info(f"🍴 Style: {cuisine}")
+            
+            # Coordinates for Map
+            w_lat = winner.get('lat', winner.get('center', {}).get('lat'))
+            w_lon = winner.get('lon', winner.get('center', {}).get('lon'))
+            
+            if show_map:
+                m = folium.Map(location=[w_lat, w_lon], zoom_start=17)
+                folium.Marker([w_lat, w_lon], popup=name, tooltip=name, icon=folium.Icon(color='red')).add_to(m)
+                folium.Marker([lat, lon], popup="Office", icon=folium.Icon(color='blue', icon='briefcase')).add_to(m)
+                st_folium(m, width=700, height=300)
                 
-                if valid_places:
-                    choice = random.choice(valid_places)
-                    name = choice['tags']['name']
-                    cuisine = choice['tags'].get('cuisine', 'Unknown Cuisine').capitalize()
-                    
-                    # OSM returns 'center' for ways/relations, 'lat/lon' for nodes
-                    c_lat = choice.get('lat', choice.get('center', {}).get('lat'))
-                    c_lon = choice.get('lon', choice.get('center', {}).get('lon'))
-                    
-                    # Create a Google Maps link for directions
-                    map_url = f"https://www.google.com/maps/search/?api=1&query={c_lat},{c_lon}"
-
-                    st.success(f"🎉 Winner: **{name}**")
-                    st.write(f"🍽️ Cuisine: {cuisine}")
-                    st.markdown(f"[📍 Get Directions]({map_url})")
-                    
-                    # Optional: Show raw data if you want to see what OSM gives you
-                    with st.expander("See raw data"):
-                        st.json(choice)
-                else:
-                    st.warning("Found places, but none had names! (OSM data can be messy)")
-            else:
-                st.error("No restaurants found nearby. Try increasing the distance.")
+            st.markdown(f"[↗️ Open in Google Maps](https://www.google.com/maps/search/?api=1&query={w_lat},{w_lon})")
         else:
-            st.error("Could not find that location. Try a different address.")
+            st.error("No places found. Try a larger distance in the sidebar!")
+else:
+    st.error("Could not find office coordinates. Check your address!")
+
+st.divider()
+st.caption("Data provided for free by OpenStreetMap")
