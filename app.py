@@ -7,8 +7,7 @@ from geopy.geocoders import Nominatim
 from streamlit_folium import st_folium
 
 # --- CONFIGURATION ---
-OFFICE_ADDRESS = "ÅSÖGATAN 115, 116 24 STOCKHOLM, SWEDEN"
-" # <--- Change to your office!
+OFFICE_ADDRESS = "ÅSÖGATAN 115, 116 24 STOCKHOLM, SWEDEN" # <--- Change to your office!
 
 st.set_page_config(page_title="Team Lunch Roulette", page_icon="🍕", layout="centered")
 
